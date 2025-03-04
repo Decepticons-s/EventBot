@@ -25,6 +25,7 @@ wheels/
 
 # 日志文件
 *.log
+*.txt
 
 # 本地的Obsidian文件夹（如果在项目内）
 obsidian/
