@@ -19,7 +19,7 @@
 pip install -r requirements.txt
 ```
 
-3. 创建`.env`文件，参考`.env.example`设置你的API密钥和Obsidian仓库路径
+3. 更改`.env`文件，设置你的API密钥和Obsidian仓库路径
 
 ## 使用方法
 
