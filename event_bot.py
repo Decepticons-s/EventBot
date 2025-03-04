@@ -43,21 +43,23 @@ class EventBot:
         # 检查配置
         self._check_config()
         
+        # 初始化路径
+        self.event_dir = os.path.join(self.obsidian_path, self.event_folder)
+        os.makedirs(self.event_dir, exist_ok=True)
+        
+        # 添加日志输出，打印实际路径
+        logger.info(f"事件将保存到: {self.event_dir}")
+        
     def _check_config(self):
         """检查配置是否正确"""
         if not self.api_key:
-            logger.error("未设置API密钥，请在config.py或环境变量中设置R1_API_KEY")
-            sys.exit(1)
+            logger.warning("未设置API密钥，某些功能可能无法正常使用")
             
+        # 如果未设置Obsidian仓库路径，则使用当前目录
         if not self.obsidian_path:
             logger.warning("未设置Obsidian仓库路径，将使用当前目录下的'obsidian'文件夹")
             self.obsidian_path = os.path.join(os.getcwd(), "obsidian")
             
-        # 确保Obsidian仓库目录及事件目录存在
-        self.event_dir = os.path.join(self.obsidian_path, self.event_folder)
-        os.makedirs(self.event_dir, exist_ok=True)
-        logger.info(f"事件将保存到: {self.event_dir}")
-    
     def call_model(self, prompt, max_tokens=None, system_prompt=None, stream=True):
         """调用大模型API
         
@@ -235,17 +237,26 @@ class EventBot:
             return "已达到总token限制，停止生成更多内容。"
             
         time_range = f"{start_year}-{end_year}"
-        system_prompt = "你是一个专业的历史学者，能够提供客观、准确、详细的历史事件信息。请简明扼要地回答问题，不要添加无关的评论。"
+        system_prompt = """你是一个专业的历史学者，能够提供客观、准确、详细的历史事件信息。
+请列出指定时间范围内的重要历史事件，每行一个事件，格式必须严格按照：
+{事件名称（xxxx年）}
+
+例如：
+{甲午战争爆发（1894年）}
+{《马关条约》签订（1895年）}
+
+注意：
+1. 严格遵循 {事件名称（xxxx年）} 的格式，不要添加其他内容
+2. 确保所有事件都在指定的时间范围内
+3. 只列出重要且有明确年份的事件
+4. 事件要足够细致，不要遗漏重要事件
+5. 不要添加编号、序号或其他前缀
+6. 不要加入未经确认的事件或模糊的时间点"""
         
-        prompt = f"""请详细描述以下历史事件在{time_range}年间的重要发展：
-事件名称：{event_name}
-
-请只提供{time_range}年间发生的客观、准确的历史信息，包括重要日期、人物和事件经过。
-内容应该条理清晰，重点突出，按时间顺序组织。
-不需要额外的评论或解释。
-如果在这个时间段内没有与该事件相关的重要发展，请说明这一点。
-"""
-
+        prompt = f"""请列出在{time_range}年间与"{event_name}"相关的所有重要历史事件。
+每个事件必须包含明确的年份，并且严格按照 {{事件名称（xxxx年）}} 的格式呈现。
+不要添加任何编号、解释或其他内容。"""
+        
         logger.info(f"正在生成 '{event_name}' 在 {time_range} 年间的内容...")
         content = self.call_model(prompt, system_prompt=system_prompt)
         return content

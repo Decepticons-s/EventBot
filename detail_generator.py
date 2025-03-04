@@ -36,57 +36,29 @@ class DetailGenerator:
         self.event_bot = EventBot()  # 实例化事件机器人用于调用模型
         self.obsidian_path = config.OBSIDIAN_VAULT_PATH
         self.event_folder = config.EVENT_FOLDER
-        self.detail_folder = "Details"  # 详情文件夹名称
+        self.detail_folder = "AIdetails"  # 详情文件夹名称
         
         # 检查配置
         self._check_config()
         
-    def _check_config(self):
-        """检查配置是否正确"""
-        if not self.obsidian_path:
-            logger.warning("未设置Obsidian仓库路径，将使用当前目录下的'obsidian'文件夹")
-            self.obsidian_path = os.path.join(os.getcwd(), "obsidian")
-            
-        # 检查Obsidian仓库路径是否存在
-        if not os.path.exists(self.obsidian_path):
-            logger.warning(f"Obsidian仓库路径 {self.obsidian_path} 不存在，将在当前目录下创建示例目录结构")
-            # 使用当前目录
-            self.obsidian_path = os.path.join(os.getcwd(), "obsidian_example")
-            
-        # 确保Obsidian仓库目录、事件目录和详情目录存在
+        # 初始化路径
         self.event_dir = os.path.join(self.obsidian_path, self.event_folder)
         self.detail_dir = os.path.join(self.obsidian_path, self.detail_folder)
         
+        # 确保目录存在
         os.makedirs(self.event_dir, exist_ok=True)
         os.makedirs(self.detail_dir, exist_ok=True)
         
+        # 打印实际使用的路径
         logger.info(f"事件列表目录: {self.event_dir}")
         logger.info(f"详情保存目录: {self.detail_dir}")
         
-        # 如果没有找到任何事件列表文件，创建一个示例文件
-        if not os.listdir(self.event_dir):
-            example_file = os.path.join(self.event_dir, "example_events.md")
-            logger.info(f"未找到事件列表文件，创建示例文件: {example_file}")
+    def _check_config(self):
+        """检查配置是否正确"""
+        if not self.obsidian_path:
+            logger.warning("未设置Obsidian仓库路径，将使用当前目录下的'obsidian_example'文件夹")
+            self.obsidian_path = os.path.join(os.getcwd(), "obsidian_example")
             
-            example_content = """---
-title: 示例历史事件列表
-created: 2025-03-04
-tags: [history, events, example]
----
-
-# 示例历史事件列表
-
-以下是一些历史事件的示例列表：
-
-- 第二次世界大战 (1939-1945)
-- 美国独立战争 (1775-1783)
-- 法国大革命 (1789-1799)
-- 中国改革开放 (1978-2000)
-- 苏联解体 (1991)
-"""
-            with open(example_file, "w", encoding="utf-8") as f:
-                f.write(example_content)
-                
     def find_event_list_files(self):
         """查找所有事件列表文件
         
@@ -114,7 +86,7 @@ tags: [history, events, example]
             file_path: 事件列表文件路径
             
         Returns:
-            list: 事件列表，每个事件为字典，包含事件名称和时间范围
+            list: 事件列表，每个事件为字典，包含事件名称和位置信息
         """
         events = []
         
@@ -123,46 +95,21 @@ tags: [history, events, example]
                 content = f.read()
                 
             # 使用正则表达式提取事件
-            # 匹配格式如: - 事件名称 (1900-2000)
-            # 或者: - 事件名称（1900-2000）
-            # 或者只有事件名称的行
-            pattern = r'[-*]\s+([^(（\r\n]+)(?:\s*[(（]([^)）]+)[)）])?'
+            # 匹配格式如: {事件名称（xxxx年）}
+            pattern = r'{([^{}]+)}'
             matches = re.finditer(pattern, content)
             
             for match in matches:
-                event_name = match.group(1).strip()
-                time_range = match.group(2).strip() if match.group(2) else None
-                
-                if not event_name:
+                event_text = match.group(1).strip()
+                if not event_text:
                     continue
-                    
-                # 处理时间范围
-                if time_range:
-                    # 尝试解析时间范围
-                    try:
-                        # 匹配中文年份或西方年份格式
-                        year_match = re.search(r'(\d{1,4})[-~到至](\d{1,4})', time_range)
-                        if year_match:
-                            start_year = int(year_match.group(1))
-                            end_year = int(year_match.group(2))
-                        else:
-                            # 如果没有明确的时间范围格式，直接使用原始时间范围
-                            start_year = time_range
-                            end_year = time_range
-                    except:
-                        start_year = time_range
-                        end_year = time_range
-                else:
-                    # 如果没有提供时间范围，使用通用时间范围
-                    start_year = "古代"
-                    end_year = "现代"
                 
                 events.append({
-                    'name': event_name,
-                    'start_year': start_year,
-                    'end_year': end_year,
+                    'name': event_text,
                     'original_file': file_path,
-                    'original_line_text': match.group(0)
+                    'original_line_text': match.group(0),
+                    'start_position': match.start(),
+                    'end_position': match.end()
                 })
         except Exception as e:
             logger.error(f"从文件 {file_path} 提取事件时出错: {str(e)}")
@@ -173,54 +120,73 @@ tags: [history, events, example]
         """为事件生成详细信息
         
         Args:
-            event: 事件字典，包含事件名称和时间范围
+            event: 事件字典，包含事件名称和位置信息
             
         Returns:
-            str: 生成的详细信息
+            str: 生成的详细信息，格式为JSON
         """
         event_name = event['name']
-        start_year = event['start_year']
-        end_year = event['end_year']
         
-        if isinstance(start_year, int) and isinstance(end_year, int):
-            time_range = f"{start_year}-{end_year}"
+        # 从事件名称提取年份（如果有）
+        year_match = re.search(r'（(\d{4})年）', event_name)
+        if year_match:
+            happened_year = year_match.group(1)
+            # 移除年份部分，获取纯事件名称
+            pure_event_name = re.sub(r'（\d{4}年）', '', event_name).strip()
         else:
-            time_range = f"{start_year}至{end_year}"
+            happened_year = "未知"
+            pure_event_name = event_name
         
         # 创建提示词
         system_prompt = """你是一位专业的历史学者，精通世界历史和中国历史。你的任务是提供客观、准确、详细的历史事件信息。
-请按照以下确切的格式组织内容，使用二级标题和段落：
+请以JSON格式输出事件的详细信息，严格按照以下格式：
 
-## 概述
-[简要介绍事件的背景、主要内容和历史意义，100-200字]
+```json
+{
+    "title": "事件标题",
+    "happened": "发生时间（尽可能精确到年月日）",
+    "person": "相关人物（多个人物用逗号分隔）",
+    "places": "发生地点（尽可能详细）",
+    "tags": "相关标签（多个标签用逗号分隔）",
+    "detailes": "详细情况（包括事件背景、经过和影响）"
+}
+```
 
-## 起因与背景
-[详细分析事件发生的原因和历史背景，200-300字]
-
-## 经过与发展
-[按时间顺序详细描述事件的发展过程和关键节点，包含具体日期和重要人物，300-500字]
-
-## 结果与影响
-[说明事件的直接结果和短期影响，200-300字]
-
-## 历史意义
-[分析事件在历史长河中的重要性和长远影响，200-300字]
-
-请确保内容客观、准确，避免主观评论和现代视角的价值判断。严格按照以上格式输出，使用Markdown语法。"""
+请确保：
+1. 严格遵循上述JSON格式，保持键名不变
+2. 内容客观、准确，避免主观评论
+3. 尽可能提供丰富、细致的信息
+4. 确保输出的JSON格式正确，可以被解析"""
         
-        prompt = f"""请详细介绍以下历史事件：
-事件名称：{event_name}
-时间范围：{time_range}
+        prompt = f"""请提供以下历史事件的详细信息：
+事件名称：{pure_event_name}
+发生年份：{happened_year}
 
-请提供详尽的历史背景、事件经过、重要人物及其作用、事件影响和历史意义等内容。
-内容应该条理清晰，重点突出，包含准确的时间节点和历史细节。
-如果有不同的历史观点或解释，请一并说明。
-请确保回答的内容完全符合系统提示中规定的格式要求。"""
+请按照系统提示中的JSON格式输出，确保包含事件的发生时间、相关人物、地点、标签和详细情况。
+JSON格式必须严格正确，键名不可改变。"""
         
         logger.info(f"正在生成 '{event_name}' 的详细信息...")
         try:
             content = self.event_bot.call_model(prompt, system_prompt=system_prompt, max_tokens=config.MAX_TOKENS_PER_REQUEST)
-            return content
+            
+            # 提取JSON部分
+            json_match = re.search(r'```json\s*(.*?)\s*```', content, re.DOTALL)
+            if json_match:
+                json_content = json_match.group(1)
+            else:
+                # 如果没有找到```json包裹的内容，尝试直接解析整个内容
+                json_content = content
+                
+            # 尝试解析和格式化JSON
+            try:
+                detail_data = json.loads(json_content)
+                # 格式化为漂亮的JSON字符串
+                formatted_json = json.dumps(detail_data, ensure_ascii=False, indent=4)
+                return formatted_json
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON解析错误: {str(e)}")
+                return content  # 返回原始内容
+                
         except Exception as e:
             logger.error(f"生成详细信息时出错: {str(e)}")
             return f"生成详细信息时出错: {str(e)}"
@@ -258,11 +224,59 @@ tags: [history, events, example]
         rel_detail_path = os.path.relpath(filepath, self.obsidian_path)
         original_file_rel = os.path.relpath(event['original_file'], self.obsidian_path)
         
-        # 准备元数据和内容
-        time_range = f"{event['start_year']}-{event['end_year']}" if isinstance(event['start_year'], int) and isinstance(event['end_year'], int) else f"{event['start_year']}至{event['end_year']}"
-        full_content = f"""---
+        # 尝试解析JSON内容
+        try:
+            detail_data = json.loads(content)
+            title = detail_data.get("title", event_name)
+            happened = detail_data.get("happened", "未知")
+            people = detail_data.get("人物", "未知")
+            location = detail_data.get("地点", "未知")
+            tags = detail_data.get("tags", "历史,事件")
+            details = detail_data.get("detailes", "无详细信息")
+            
+            # 准备标签列表
+            tag_list = ["event", "history", "detail"]
+            for tag in tags.split(","):
+                tag = tag.strip()
+                if tag and tag not in tag_list:
+                    tag_list.append(tag)
+            
+            # 准备元数据和内容
+            full_content = f"""---
+title: {title}
 event: {event_name}
-time_range: {time_range}
+happened: {happened}
+people: {people}
+location: {location}
+tags: {", ".join(tag_list)}
+---
+
+# {title}
+
+> 本文是对事件 [[{original_file_rel}|{event_name}]] 的详细介绍
+
+## 基本信息
+
+- **发生时间**：{happened}
+- **相关人物**：{people}
+- **发生地点**：{location}
+
+## 详细情况
+
+{details}
+
+## 相关链接
+
+- [[{original_file_rel}|返回事件列表]]
+
+"""
+        except json.JSONDecodeError:
+            # 如果解析JSON失败，使用原始内容
+            logger.warning(f"无法解析JSON内容，使用原始格式")
+            
+            # 准备元数据和内容
+            full_content = f"""---
+event: {event_name}
 created: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 tags: [event, history, detail]
 ---
@@ -304,19 +318,18 @@ tags: [event, history, detail]
             with open(event['original_file'], 'r', encoding='utf-8') as f:
                 content = f.read()
             
-            # 替换匹配的行，添加详情链接
+            # 获取原始行文本和位置
             original_line = event['original_line_text']
+            start_pos = event['start_position']
+            end_pos = event['end_position']
             event_name = event['name']
             
-            # 构建新行，在原行后添加详情链接
-            if '[[' in original_line:
-                # 如果原行已经包含链接，可能需要更复杂的处理
-                new_line = original_line + f" - [[{detail_link}|详情]]"
-            else:
-                new_line = original_line + f" - [[{detail_link}|详情]]"
+            # 构建新行，保持原始事件格式并添加详情链接
+            # 在事件后添加链接，格式为 {事件名称（xxxx年）} [[详情链接|详情]]
+            new_line = f"{original_line} [[{detail_link}|详情]]"
             
-            # 替换内容
-            new_content = content.replace(original_line, new_line)
+            # 替换内容，精确定位到原始行的位置
+            new_content = content[:start_pos] + new_line + content[end_pos:]
             
             # 保存更新后的文件
             with open(event['original_file'], 'w', encoding='utf-8') as f:
@@ -357,6 +370,10 @@ tags: [event, history, detail]
             # 生成详细信息
             detail_content = self.generate_detail_for_event(event)
             
+            if not detail_content or "错误" in detail_content:
+                logger.error(f"生成事件 '{event_name}' 的详细信息失败")
+                continue
+                
             # 保存详细信息
             filepath, rel_detail_path = self.save_detail_to_obsidian(event, detail_content)
             
@@ -365,6 +382,11 @@ tags: [event, history, detail]
                 updated = self.update_event_list_with_link(event, rel_detail_path)
                 if updated:
                     successful_details += 1
+                    print(f"✅ 已成功生成并保存事件 '{event_name}' 的详细信息")
+                else:
+                    print(f"⚠️ 已保存事件 '{event_name}' 的详细信息，但未能更新链接")
+            else:
+                print(f"❌ 保存事件 '{event_name}' 的详细信息失败")
             
             # 处理完一个事件后稍作停顿，避免频繁调用API
             if i < len(events) - 1:
