@@ -1,5 +1,5 @@
 # 环境变量文件（包含敏感信息）
-# .env
+.env
 
 # Python相关文件
 __pycache__/
