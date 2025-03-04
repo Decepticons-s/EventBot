@@ -266,11 +266,19 @@ class EventBot:
         safe_event_name = "".join(c for c in event_name if c.isalnum() or c in " _-")
         safe_event_name = safe_event_name.strip().replace(" ", "_")
         
-        # 创建文件名
+        # 创建文件名，不包含时间戳
         time_range = f"{start_year}-{end_year}"
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        filename = f"{safe_event_name}_{time_range}_{timestamp}.md"
+        filename = f"{safe_event_name}_{time_range}.md"
         filepath = os.path.join(self.event_dir, filename)
+        
+        # 检查文件是否已存在，如果存在则加上序号
+        if os.path.exists(filepath):
+            count = 1
+            while os.path.exists(filepath):
+                filename = f"{safe_event_name}_{time_range}_{count}.md"
+                filepath = os.path.join(self.event_dir, filename)
+                count += 1
+            logger.info(f"文件已存在，将使用新文件名: {filename}")
         
         # 准备内容
         full_content = f"""---
