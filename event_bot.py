@@ -14,6 +14,7 @@ import requests
 from datetime import datetime
 from tqdm import tqdm
 import config
+import re
 
 # 配置日志
 logging.basicConfig(
@@ -57,13 +58,14 @@ class EventBot:
         os.makedirs(self.event_dir, exist_ok=True)
         logger.info(f"事件将保存到: {self.event_dir}")
     
-    def call_model(self, prompt, max_tokens=None, system_prompt=None):
+    def call_model(self, prompt, max_tokens=None, system_prompt=None, stream=True):
         """调用大模型API
         
         Args:
             prompt: 提示词
             max_tokens: 最大生成token数
             system_prompt: 系统提示词，可选
+            stream: 是否使用流式输出，默认为True
             
         Returns:
             str: 模型返回的内容
@@ -89,29 +91,72 @@ class EventBot:
             "model": self.model_name,
             "messages": messages,
             "max_tokens": max_tokens,
-            "temperature": 0.7
+            "temperature": 0.4,
+            "stream": stream  # 开启流式响应
         }
+        
+        full_content = ""
+        tokens_used = 0
         
         # 重试机制
         for attempt in range(config.RETRY_ATTEMPTS):
             try:
                 logger.info(f"正在调用模型 (第{attempt+1}次尝试)...")
-                response = requests.post(
-                    self.api_endpoint,
-                    headers=headers,
-                    json=data,
-                    timeout=config.REQUEST_TIMEOUT
-                )
-                response.raise_for_status()
-                self.call_count += 1
                 
-                result = response.json()
-                content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
-                tokens_used = result.get("usage", {}).get("total_tokens", 0)
+                if stream:
+                    # 流式处理
+                    response = requests.post(
+                        self.api_endpoint,
+                        headers=headers,
+                        json=data,
+                        timeout=config.REQUEST_TIMEOUT,
+                        stream=True  # 启用流式传输
+                    )
+                    response.raise_for_status()
+                    self.call_count += 1
+                    
+                    # 处理流式响应
+                    print("\n模型正在思考...\n")
+                    for line in response.iter_lines():
+                        if line:
+                            line = line.decode('utf-8')
+                            if line.startswith("data: "):
+                                if line == "data: [DONE]":
+                                    break
+                                    
+                                # 解析JSON数据
+                                try:
+                                    json_data = json.loads(line[6:])  # 去掉"data: "前缀
+                                    delta_content = json_data.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                                    if delta_content:
+                                        print(delta_content, end="", flush=True)
+                                        full_content += delta_content
+                                except json.JSONDecodeError:
+                                    pass
+                    
+                    print("\n")  # 打印一个换行，表示响应结束
+                    
+                    # 尝试获取token使用信息（流式模式下可能没有）
+                    tokens_used = 0  # 流式模式下可能无法获取准确的token数
+                    
+                else:
+                    # 非流式处理
+                    response = requests.post(
+                        self.api_endpoint,
+                        headers=headers,
+                        json=data,
+                        timeout=config.REQUEST_TIMEOUT
+                    )
+                    response.raise_for_status()
+                    self.call_count += 1
+                    
+                    result = response.json()
+                    full_content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+                    tokens_used = result.get("usage", {}).get("total_tokens", 0)
+                
                 self.total_tokens += tokens_used
-                
-                logger.info(f"调用成功，使用了 {tokens_used} tokens")
-                return content
+                logger.info(f"调用成功，使用了约 {tokens_used} tokens")
+                return full_content
                 
             except requests.exceptions.RequestException as e:
                 logger.error(f"API调用失败: {str(e)}")
@@ -125,59 +170,94 @@ class EventBot:
         
         return "发生未知错误"
     
-    def get_event_info(self, event_name, time_range, num_parts=3):
-        """获取事件信息，分多次调用模型以避免一次生成过多内容
+    def parse_time_range(self, time_range):
+        """解析时间范围
+        
+        Args:
+            time_range: 时间范围字符串，格式如 "2000-2024"
+            
+        Returns:
+            tuple: (开始年份, 结束年份)
+        """
+        # 使用正则表达式提取年份
+        match = re.match(r'(\d{1,4})-(\d{1,4})', time_range)
+        if match:
+            start_year = int(match.group(1))
+            end_year = int(match.group(2))
+            return start_year, end_year
+        else:
+            # 如果格式不匹配，返回原始字符串作为整体时间范围
+            logger.warning(f"无法解析时间范围: {time_range}，将作为整体处理")
+            return time_range, time_range
+    
+    def split_time_range(self, start_year, end_year, segments):
+        """将时间范围分割成多个段
+        
+        Args:
+            start_year: 开始年份
+            end_year: 结束年份
+            segments: 分段数量
+            
+        Returns:
+            list: 包含多个时间段的列表，每个元素为 (段开始年份, 段结束年份)
+        """
+        total_years = end_year - start_year + 1
+        # 计算每段的年数（向上取整）
+        years_per_segment = (total_years + segments - 1) // segments
+        
+        time_segments = []
+        current_year = start_year
+        
+        for i in range(segments):
+            segment_start = current_year
+            segment_end = min(current_year + years_per_segment - 1, end_year)
+            time_segments.append((segment_start, segment_end))
+            
+            current_year = segment_end + 1
+            if current_year > end_year:
+                break
+                
+        return time_segments
+    
+    def get_event_for_time_segment(self, event_name, start_year, end_year):
+        """获取特定时间段内的事件信息
         
         Args:
             event_name: 事件名称
-            time_range: 时间范围描述
-            num_parts: 将事件分成几部分获取
+            start_year: 开始年份
+            end_year: 结束年份
             
         Returns:
-            list: 包含多个部分内容的列表
+            str: 获取到的事件内容
         """
         if self.total_tokens >= config.MAX_TOKENS_TOTAL:
             logger.warning(f"已达到总token限制 ({config.MAX_TOKENS_TOTAL})，停止生成")
-            return ["已达到总token限制，停止生成更多内容。"]
+            return "已达到总token限制，停止生成更多内容。"
             
-        results = []
+        time_range = f"{start_year}-{end_year}"
         system_prompt = "你是一个专业的历史学者，能够提供客观、准确、详细的历史事件信息。请简明扼要地回答问题，不要添加无关的评论。"
         
-        for i in range(num_parts):
-            part_desc = ""
-            if num_parts > 1:
-                if i == 0:
-                    part_desc = "起因和背景"
-                elif i == num_parts - 1:
-                    part_desc = "结果和影响"
-                else:
-                    part_desc = f"发展过程 (第{i}部分)"
-                    
-            prompt = f"""请详细描述以下历史事件的{part_desc}：
+        prompt = f"""请详细描述以下历史事件在{time_range}年间的重要发展：
 事件名称：{event_name}
-时间范围：{time_range}
 
-请只提供客观、准确的历史信息，包括重要日期、人物和事件经过。
-内容应该条理清晰，重点突出。不需要额外的评论或解释。
+请只提供{time_range}年间发生的客观、准确的历史信息，包括重要日期、人物和事件经过。
+内容应该条理清晰，重点突出，按时间顺序组织。
+不需要额外的评论或解释。
+如果在这个时间段内没有与该事件相关的重要发展，请说明这一点。
 """
 
-            logger.info(f"正在生成 '{event_name}' 的第 {i+1}/{num_parts} 部分内容...")
-            content = self.call_model(prompt, system_prompt=system_prompt)
-            results.append(content)
-            
-            # 在多次请求之间暂停一下，避免频繁调用API
-            if i < num_parts - 1:
-                time.sleep(1)
-                
-        return results
+        logger.info(f"正在生成 '{event_name}' 在 {time_range} 年间的内容...")
+        content = self.call_model(prompt, system_prompt=system_prompt)
+        return content
     
-    def save_to_obsidian(self, event_name, time_range, contents):
-        """将生成的内容保存到Obsidian
+    def save_event_to_obsidian(self, event_name, start_year, end_year, content):
+        """将事件内容保存到Obsidian
         
         Args:
             event_name: 事件名称
-            time_range: 时间范围
-            contents: 生成的内容列表
+            start_year: 开始年份
+            end_year: 结束年份
+            content: 事件内容
             
         Returns:
             str: 保存的文件路径
@@ -187,8 +267,9 @@ class EventBot:
         safe_event_name = safe_event_name.strip().replace(" ", "_")
         
         # 创建文件名
+        time_range = f"{start_year}-{end_year}"
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        filename = f"{safe_event_name}_{timestamp}.md"
+        filename = f"{safe_event_name}_{time_range}_{timestamp}.md"
         filepath = os.path.join(self.event_dir, filename)
         
         # 准备内容
@@ -199,23 +280,12 @@ created: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 tags: [event, history]
 ---
 
-# {event_name}
-
-> 时间范围: {time_range}
+# {event_name} ({time_range})
 
 """
         
         # 添加内容
-        for i, content in enumerate(contents):
-            if len(contents) > 1:
-                if i == 0:
-                    full_content += "## 起因和背景\n\n"
-                elif i == len(contents) - 1:
-                    full_content += "## 结果和影响\n\n"
-                else:
-                    full_content += f"## 发展过程 (第{i}部分)\n\n"
-            
-            full_content += content + "\n\n"
+        full_content += content + "\n\n"
         
         # 保存文件
         with open(filepath, "w", encoding="utf-8") as f:
@@ -239,46 +309,63 @@ tags: [event, history]
                 print("感谢使用，再见！")
                 break
                 
-            time_range = input("时间范围（例如：1939-1945）: ").strip()
+            time_range = input("时间范围（例如：2000-2024）: ").strip()
             
             try:
-                parts = int(input("将内容分成几部分获取（默认3）: ").strip() or "3")
+                segments = int(input("将内容分成几部分获取（默认3）: ").strip() or "3")
             except ValueError:
-                parts = 3
+                segments = 3
             
-            print(f"\n正在收集关于 '{event_name}' ({time_range}) 的信息...")
-            print("这可能需要一些时间，请耐心等待...\n")
-            
+            # 解析时间范围
             try:
-                with tqdm(total=parts, desc="进度") as pbar:
-                    contents = []
-                    system_prompt = "你是一个专业的历史学者，能够提供客观、准确、详细的历史事件信息。请简明扼要地回答问题，不要添加无关的评论。"
+                start_year, end_year = self.parse_time_range(time_range)
+                
+                # 如果开始年份和结束年份相同，就不再划分时间段
+                if isinstance(start_year, int) and isinstance(end_year, int) and start_year != end_year:
+                    # 将时间范围分割成多个段
+                    time_segments = self.split_time_range(start_year, end_year, segments)
+                    total_segments = len(time_segments)
                     
-                    for i in range(parts):
-                        part_desc = "起因" if i == 0 else ("影响" if i == parts-1 else f"过程{i}")
-                        pbar.set_description(f"获取{part_desc}")
+                    print(f"\n已将时间范围 {start_year}-{end_year} 分为 {total_segments} 个时间段:")
+                    for i, (seg_start, seg_end) in enumerate(time_segments):
+                        print(f"  时间段 {i+1}: {seg_start}-{seg_end}")
                         
-                        # 为简化起见，这里直接使用get_event_info方法的部分功能
-                        prompt = f"""请详细描述以下历史事件的{'起因和背景' if i == 0 else ('结果和影响' if i == parts-1 else f'发展过程 (第{i}部分)')}：
-事件名称：{event_name}
-时间范围：{time_range}
-
-请只提供客观、准确的历史信息，包括重要日期、人物和事件经过。
-内容应该条理清晰，重点突出。不需要额外的评论或解释。
-"""
-                        content = self.call_model(prompt, system_prompt=system_prompt)
-                        contents.append(content)
-                        pbar.update(1)
+                    print(f"\n开始收集关于 '{event_name}' 的信息...")
+                    print("每个时间段的内容将立即保存到Obsidian仓库中...\n")
+                    
+                    # 使用tqdm显示总体进度
+                    with tqdm(total=total_segments, desc="总进度") as pbar:
+                        saved_files = []
                         
-                        # 避免频繁调用API
-                        if i < parts - 1:
-                            time.sleep(1)
-                
-                filepath = self.save_to_obsidian(event_name, time_range, contents)
-                
-                print(f"\n✅ 内容已保存到: {filepath}")
-                print(f"API调用次数: {self.call_count}, 总token使用: {self.total_tokens}")
-                
+                        for i, (seg_start, seg_end) in enumerate(time_segments):
+                            seg_desc = f"{seg_start}-{seg_end}"
+                            pbar.set_description(f"处理{seg_desc}")
+                            
+                            # 获取当前时间段的事件内容
+                            content = self.get_event_for_time_segment(event_name, seg_start, seg_end)
+                            
+                            # 立即保存到Obsidian
+                            filepath = self.save_event_to_obsidian(event_name, seg_start, seg_end, content)
+                            saved_files.append(filepath)
+                            
+                            pbar.update(1)
+                            
+                            # 避免频繁调用API
+                            if i < total_segments - 1:
+                                time.sleep(1)
+                        
+                        print(f"\n✅ 已完成所有时间段的内容收集和保存")
+                        print(f"API调用次数: {self.call_count}, 总token使用: {self.total_tokens}")
+                        print(f"已保存 {len(saved_files)} 个文件到Obsidian仓库")
+                else:
+                    # 如果时间范围无法解析或者是单一年份，则作为整体处理
+                    print(f"\n正在收集关于 '{event_name}' ({time_range}) 的信息...")
+                    content = self.get_event_for_time_segment(event_name, start_year, end_year)
+                    filepath = self.save_event_to_obsidian(event_name, start_year, end_year, content)
+                    
+                    print(f"\n✅ 内容已保存到: {filepath}")
+                    print(f"API调用次数: {self.call_count}, 总token使用: {self.total_tokens}")
+            
             except KeyboardInterrupt:
                 print("\n操作已取消")
             except Exception as e:
