@@ -6,7 +6,7 @@ load_dotenv()
 
 # API相关配置
 API_KEY = os.getenv("R1_API_KEY", "")  # 从环境变量获取API密钥
-API_ENDPOINT = os.getenv("R1_API_ENDPOINT", "https://api.siliconflow.cn/v1/chat/completions")  # 硅基流动官方API端点
+API_ENDPOINT = os.getenv("R1_API_ENDPOINT", "")  # 从环境变量中获取ENDPOINT
 
 # Obsidian仓库配置
 OBSIDIAN_VAULT_PATH = os.getenv("OBSIDIAN_VAULT_PATH", "")  # Obsidian仓库路径
