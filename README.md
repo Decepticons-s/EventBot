@@ -19,7 +19,16 @@
 pip install -r requirements.txt
 ```
 
-3. 更改`.env`文件，设置你的API密钥和Obsidian仓库路径
+3. 创建`.env`文件，参考`.env.example`设置你的API密钥和Obsidian仓库路径
+
+4. 配置说明
+
+你可以通过修改`config.py`文件或设置环境变量来配置:
+
+- API密钥和端点
+- Obsidian仓库路径
+- 模型参数
+- 内容生成限制
 
 ## 使用方法
 
@@ -36,14 +45,7 @@ python event_bot.py
 
 3. 等待内容生成完成，结果将自动保存到Obsidian仓库中
 
-## 配置说明
-
-你可以通过修改`config.py`文件或设置环境变量来配置:
-
-- API密钥和端点
-- Obsidian仓库路径
-- 模型参数
-- 内容生成限制
+4. 运行`python detail_generator.py`生成详细信息
 
 ## 注意事项
 
