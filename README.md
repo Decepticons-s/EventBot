@@ -1,6 +1,7 @@
 # EventBot
 
-一个使用大模型收集历史事件信息并保存到Obsidian知识库的Python工具。
+因为常常在学习新东西时，不知道它的发展脉络，就做了这个EventBot工具，帮你查询相关事件信息并保存到 Obsidian 仓库（任意你喜欢的本地仓库）。并自动建立
+双链知识图谱。
 
 ## 功能特点
 
@@ -52,9 +53,12 @@ python event_bot.py
 - 请确保你有有效大模型API访问权限
 - 合理设置token数量限制，避免过度使用API
 - 生成的内容仅供参考，请自行验证历史信息的准确性
+<<<<<<< HEAD
 
 ## 许可证
 
 本项目采用MIT许可证开源 - 查看 [LICENSE](LICENSE) 文件了解更多详情。
 
 Copyright (c) 2025 Jason Sun
+=======
+>>>>>>> 1e49a32966a5ecc65ffe4fe8c7edeac1a79aaa24
