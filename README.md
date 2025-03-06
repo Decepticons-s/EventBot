@@ -52,3 +52,9 @@ python event_bot.py
 - 请确保你有有效大模型API访问权限
 - 合理设置token数量限制，避免过度使用API
 - 生成的内容仅供参考，请自行验证历史信息的准确性
+
+## 许可证
+
+本项目采用MIT许可证开源 - 查看 [LICENSE](LICENSE) 文件了解更多详情。
+
+Copyright (c) 2025 Jason Sun
