@@ -58,4 +58,4 @@ python event_bot.py
 
 本项目采用MIT许可证开源 - 查看 [LICENSE](LICENSE) 文件了解更多详情。
 
-Copyright (c) 2025 Jason Sun
+Copyright (c) 2025 exxpilot@outlook.com
